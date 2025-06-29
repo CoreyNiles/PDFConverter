@@ -7,26 +7,84 @@ import JSZip from 'jszip';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
 export class PDFProcessor {
-  // Extract text from PDF using PDF.js
+  // Extract text from PDF using PDF.js with better encoding handling
   static async extractTextFromPdf(file: File): Promise<string> {
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pdf = await pdfjsLib.getDocument({ 
+        data: arrayBuffer,
+        useSystemFonts: true,
+        disableFontFace: false,
+        verbosity: 0
+      }).promise;
+      
       let fullText = '';
 
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
         const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map((item: any) => item.str)
-          .join(' ');
-        fullText += pageText + '\n\n';
+        const textContent = await page.getTextContent({
+          normalizeWhitespace: true,
+          disableCombineTextItems: false
+        });
+        
+        // Better text extraction with proper spacing and formatting
+        let pageText = '';
+        let lastY = null;
+        let lastX = null;
+        
+        for (const item of textContent.items) {
+          if ('str' in item && 'transform' in item) {
+            const currentY = item.transform[5];
+            const currentX = item.transform[4];
+            
+            // Add line breaks for new lines (different Y coordinates)
+            if (lastY !== null && Math.abs(currentY - lastY) > 5) {
+              pageText += '\n';
+            }
+            // Add spaces for horizontal gaps
+            else if (lastX !== null && lastY !== null && 
+                     Math.abs(currentY - lastY) < 5 && 
+                     currentX - lastX > 10) {
+              pageText += ' ';
+            }
+            
+            // Clean and add the text
+            const cleanText = item.str
+              .replace(/\s+/g, ' ') // Normalize whitespace
+              .replace(/[^\x20-\x7E\u00A0-\u024F\u1E00-\u1EFF]/g, '') // Remove non-printable chars but keep accented characters
+              .trim();
+            
+            if (cleanText) {
+              pageText += cleanText;
+            }
+            
+            lastY = currentY;
+            lastX = currentX + (item.width || 0);
+          }
+        }
+        
+        if (pageText.trim()) {
+          fullText += pageText.trim() + '\n\n';
+        }
       }
 
-      return fullText.trim();
+      // Clean up the final text
+      const cleanedText = fullText
+        .replace(/\n{3,}/g, '\n\n') // Remove excessive line breaks
+        .replace(/\s+$/gm, '') // Remove trailing spaces
+        .trim();
+
+      if (!cleanedText || cleanedText.length < 10) {
+        throw new Error('No readable text could be extracted from this PDF. The PDF may contain only images or use unsupported fonts.');
+      }
+
+      return cleanedText;
     } catch (error) {
       console.error('Error extracting text from PDF:', error);
-      throw new Error('Failed to extract text from PDF');
+      if (error.message && error.message.includes('No readable text')) {
+        throw error;
+      }
+      throw new Error('Failed to extract text from PDF. The file may be corrupted or password-protected.');
     }
   }
 
