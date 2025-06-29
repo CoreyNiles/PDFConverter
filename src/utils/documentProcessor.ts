@@ -127,10 +127,8 @@ export class DocumentProcessor {
         }],
       });
 
-      const buffer = await Packer.toBuffer(doc);
-      return new Blob([buffer], { 
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
-      });
+      const blob = await Packer.toBlob(doc);
+      return blob;
     } catch (error) {
       console.error('PDF to Word conversion failed:', error);
       throw new Error('Failed to convert PDF to Word document');
